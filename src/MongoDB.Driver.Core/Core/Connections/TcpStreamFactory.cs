@@ -51,7 +51,11 @@ namespace MongoDB.Driver.Core.Connections
 #if NETSTANDARD1_5 || NETSTANDARD1_6 || NETSTANDARD2_0
             // ugh... I know... but there isn't a non-async version of dns resolution
             // in .NET Core
+#if NETSTANDARD2_0
+            var resolved = ResolveEndPoints(endPoint);
+#else            
             var resolved = ResolveEndPointsAsync(endPoint).GetAwaiter().GetResult();
+#endif
             for (int i = 0; i < resolved.Length; i++)
             {
                 try
@@ -277,7 +281,33 @@ namespace MongoDB.Driver.Core.Connections
 
             return socket;
         }
+#if  NETSTANDARD2_0
+        private EndPoint[] ResolveEndPoints(EndPoint initial)
+        {
+            var dnsInitial = initial as DnsEndPoint;
+            if (dnsInitial == null)
+            {
+                return new[] { initial };
+            }
+            
+            IPAddress address;
+            if (IPAddress.TryParse(dnsInitial.Host, out address))
+            {
+                return new[] { new IPEndPoint(address, dnsInitial.Port) };
+            }
 
+            var preferred = initial.AddressFamily;
+            if (preferred == AddressFamily.Unspecified || preferred == AddressFamily.Unknown)
+            {
+                preferred = _settings.AddressFamily;
+            }
+
+            return Dns.GetHostAddresses(dnsInitial.Host)
+                .Select(x => new IPEndPoint(x, dnsInitial.Port))
+                .OrderBy(x => x, new PreferredAddressFamilyComparer(preferred))
+                .ToArray();
+        }
+#endif
         private async Task<EndPoint[]> ResolveEndPointsAsync(EndPoint initial)
         {
             var dnsInitial = initial as DnsEndPoint;
